@@ -1,0 +1,266 @@
+---
+title: "Chapter 1"
+subtitle: "Introduction"
+output: html_notebook
+---
+
+```{r load_packages1, message = FALSE}
+# Packages required for Chapter 1
+library(knitr) 
+library(gridExtra)
+library(GGally)
+library(kableExtra)
+library(jtools)
+library(rsample)
+library(broom)
+library(tidyverse)    
+```
+
+```{r OLSassumptions, fig.align = "center", out.width = "90%", fig.cap = 'Assumptions for linear least squares regression (LLSR).', echo=FALSE, message = FALSE}
+## Sample data for graph of OLS normality assumption
+##   Code from https://stackoverflow.com/questions/31794876/ggplot2-how-to-curve-small-gaussian-densities-on-a-regression-line?rq=1
+
+set.seed(0)
+dat <- data.frame(x=(x=runif(10000, 0, 50)),
+                  y=rnorm(10000, 10*x, 100))
+
+## breaks: where you want to compute densities
+breaks <- seq(0, max(dat$x), len=5)
+dat$section <- cut(dat$x, breaks)
+
+## Get the residuals
+dat$res <- residuals(lm(y ~ x, data=dat))
+
+## Compute densities for each section, flip the axes, add means of sections
+## Note: densities need to be scaled in relation to section size (2000 here)
+dens <- do.call(rbind, lapply(split(dat, dat$section), function(x) {
+  d <- density(x$res, n=5000)
+  res <- data.frame(x=max(x$x)- d$y*2000, y=d$x+mean(x$y))
+  res <- res[order(res$y), ]
+  ## Get some data for normal lines as well
+  xs <- seq(min(x$res), max(x$res), len=5000)
+  res <- rbind(res, data.frame(y=xs + mean(x$y),
+                               x=max(x$x) - 2000*dnorm(xs, 0, sd(x$res))))
+  res$type <- rep(c("empirical", "normal"), each=5000)
+  res
+}))
+dens$section <- rep(levels(dat$section), each=10000)
+
+ggplot(dat, aes(x, y)) +
+  geom_point(size = 0.1, alpha = 0.25) +
+  geom_smooth(method="lm", fill=NA, lwd=2) +
+  geom_path(data=dens[dens$type=="normal",], 
+            aes(x, y, group=section), color="salmon", lwd=1.1) +
+  theme_bw() +
+  geom_vline(xintercept=breaks, lty=2)
+```
+
+```{r introtable1,echo=FALSE, warning=FALSE}
+derby.df <- read.csv("data/derbyplus.csv")
+derby.df
+```
+
+```{r}
+derby.df <- derby.df %>%
+  mutate( fast = ifelse(condition=="fast",1,0), 
+          good = ifelse(condition=="good",1,0),
+          yearnew = year - 1896,
+          fastfactor = ifelse(fast == 0, "not fast", "fast"))
+derby.df
+```
+
+```{r twohist, fig.align = "center", out.width="90%", fig.cap = 'Histograms of key continuous variables.  Plot (a) shows winning speeds, while plot (b) shows the number of starters.', echo=FALSE, message=FALSE}
+# EDA graphs
+speed_hist <- ggplot(data = derby.df, aes(x = speed)) + 
+  geom_histogram(binwidth = 0.5, fill = "white",
+                 color = "black") + 
+  xlab("Winning speed (ft/s)") + ylab("Frequency") + labs(title="(a)")
+starters_hist <- ggplot(data = derby.df, aes(x = starters)) + 
+  geom_histogram(binwidth = 3, fill = "white",
+                 color = "black") + 
+  xlab("Number of starters") + ylab("Frequency") + labs(title="(b)")
+grid.arrange(speed_hist, starters_hist, ncol = 2)
+```
+
+```{r}
+derby.df %>% 
+  count(condition) %>% 
+  mutate(
+    ratio = n / sum(n),
+    pct = round(ratio * 100)
+  )
+```
+
+```{r bivariate, fig.align = "center", out.width = "90%", fig.cap = 'Relationships between pairs of variables in the Kentucky Derby data set.', echo=FALSE, warning=FALSE, message = FALSE}
+gg <- ggpairs(data = derby.df, 
+              columns = c("condition", "year", "starters", "speed"))
+gg[4,1] <- gg[4,1] + geom_histogram( binwidth = 0.75)
+gg[2,1] <- gg[2,1] + geom_histogram( binwidth = 20)
+gg[3,1] <- gg[3,1] + geom_histogram( binwidth = 3)
+gg
+```
+
+```{r codeds, fig.align = "center", out.width = "90%", fig.cap = 'Linear trends in winning speeds over time, presented separately for fast conditions vs. good or slow conditions.', echo=FALSE, warning=FALSE, message=FALSE}
+# Coded scatterplot
+ggplot(derby.df, aes(x = year, y = speed, colour = fastfactor)) +
+  geom_point(aes(shape = fastfactor)) +
+  geom_smooth(aes(linetype = fastfactor), method = lm, se = FALSE)
+```
+
+```{r model11, comment=NA}
+model1 <- lm(speed ~ year, data = derby.df)
+summary(model1)
+```
+
+```{r, echo=FALSE, message=FALSE}
+coef(summary(model1))
+cat(" R squared = ", summary(model1)$r.squared, "\n", 
+    "Residual standard error = ", summary(model1)$sigma)
+```
+
+```{r model2, comment=NA}
+model2 <- lm(speed ~ yearnew, data = derby.df)
+summary(model2)
+```
+
+```{r, echo=FALSE, message=FALSE}
+coef(summary(model2))
+cat(" R squared = ", summary(model2)$r.squared, "\n", 
+    "Residual standard error = ", summary(model2)$sigma)
+```
+
+```{r center, fig.align = "center", out.width = "90%", fig.cap = 'Compare Model 1 (with intercept at 0) to Model 2 (with intercept at 1896).', echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(derby.df, aes(x = year, y = speed)) +
+  geom_point() + xlim(0,2020) + ylim(0,55) +
+  geom_smooth(method = lm, se = FALSE, fullrange = TRUE) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  geom_vline(xintercept = 1896, linetype = 2) +
+  geom_segment(aes(x = 100, y = 0, xend = 1800, yend = 0), 
+                   arrow = arrow(length = unit(0.5, "cm")))
+```
+
+```{r resid2, fig.align = "center", out.width = "90%", fig.cap = 'Residual plots for Model 2.', echo=FALSE, warning=FALSE}
+# Residual diagnostics for Model 2
+par(mfrow=c(2,2))
+plot(model2)
+par(mfrow=c(1,1))
+```
+
+```{r models2and2q, fig.align = "center", out.width = "90%", fig.cap = 'Linear (solid) vs. quadratic (dashed) fit.', echo=FALSE, warning=FALSE}
+# Fitted models for Model 2 and Model 2Q
+ggplot(derby.df, aes(x = year, y = speed)) +
+  geom_point() +
+  stat_smooth(method = "lm", formula = y ~ x, 
+              se = FALSE, linetype = 1) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2), 
+              se = FALSE, linetype = 2)
+```
+
+```{r model2Q, comment=NA}
+derby.df <- mutate(derby.df, yearnew2 = yearnew^2)
+model2q <- lm(speed ~ yearnew + yearnew2, data = derby.df)
+summary(model2q)
+```
+
+```{r, echo=FALSE, message=FALSE}
+coef(summary(model2q))
+cat(" R squared = ", summary(model2q)$r.squared, "\n", 
+    "Residual standard error = ", summary(model2q)$sigma)
+```
+
+```{r resid2q, fig.align = "center", out.width = "90%", fig.cap = 'Residual plots for Model 2Q.', echo=FALSE, warning=FALSE}
+# Residual diagnostics for Model 2
+par(mfrow=c(2,2))
+plot(model2q)
+par(mfrow=c(1,1))
+```
+
+```{r model3, comment=NA}
+model3 <- lm(speed ~ fast, data = derby.df)
+summary(model3)
+```
+
+```{r, echo=FALSE, message=FALSE}
+coef(summary(model3))
+cat(" R squared = ", summary(model3)$r.squared, "\n", 
+    "Residual standard error = ", summary(model3)$sigma)
+```
+
+```{r model4, comment=NA}
+model4 <- lm(speed ~ yearnew + fast, data = derby.df)
+summary(model4)
+```
+
+```{r, echo=FALSE, message=FALSE}
+coef(summary(model4))
+cat(" R squared = ", summary(model4)$r.squared, "\n", 
+    "Residual standard error = ", summary(model4)$sigma)
+```
+
+```{r model4inf, comment=NA}
+confint(model4)
+new.data <- data.frame(yearnew = 2017 - 1896, fast = 1) 
+predict(model4, new = new.data, interval = "prediction")
+```
+
+```{r model4boot, comment=NA, message=FALSE}
+# updated code from tobiasgerstenberg on github
+set.seed(413)
+bootreg <- derby.df %>% 
+  bootstraps(1000) %>%
+  pull(splits) %>% 
+  map_dfr(~lm(speed ~ yearnew + fast, data = .) %>% 
+            tidy())
+bootreg %>% 
+  group_by(term) %>% 
+  dplyr::summarize(low=quantile(estimate, .025),
+            high=quantile(estimate, .975))
+```
+
+```{r boot4, fig.align = "center", out.width = "90%", fig.cap = 'Bootstrapped distributions for Model 4 coefficients.', echo=FALSE, warning=FALSE}
+ggplot(bootreg, aes(estimate)) + 
+  geom_histogram(bins = 10, color = "black", fill = "white") + 
+  facet_wrap(~ term, scales="free")
+```
+
+```{r model5, comment=NA}
+model5 <- lm(speed ~ yearnew + fast + yearnew:fast, 
+             data=derby.df)
+summary(model5)
+```
+
+```{r, echo=FALSE, message=FALSE}
+coef(summary(model5))
+cat(" R squared = ", summary(model5)$r.squared, "\n", 
+    "Residual standard error = ", summary(model5)$sigma)
+```
+
+```{r model0, comment=NA}
+model0 <- lm(speed ~ yearnew + yearnew2 + fast + good +
+               starters, data = derby.df)
+summary(model0)
+```
+
+```{r, echo=FALSE, message=FALSE}
+coef(summary(model0))
+cat(" R squared = ", summary(model0)$r.squared, "\n", 
+    "Residual standard error = ", summary(model0)$sigma)
+```
+
+```{r comment=NA, message=FALSE}
+# Compare models with and without terms for track condition
+model0_reduced <- lm(speed ~ yearnew + yearnew2 + 
+                       starters, data = derby.df)
+drop_in_dev <- anova(model0_reduced, model0, test = "F")
+drop_in_dev
+```
+
+```{r comment=NA, message=F, echo=F}
+did_print <- data.frame(ResidDF=drop_in_dev$`Res.Df`,
+    RSS=drop_in_dev$RSS,
+    SS=drop_in_dev$F, Df=drop_in_dev$Df,
+    pval=drop_in_dev$`Pr(>F)`)
+row.names(did_print) <- row.names(drop_in_dev)
+did_print
+```
+
